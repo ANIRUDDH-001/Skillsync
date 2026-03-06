@@ -4,6 +4,7 @@ import { requireStudentProfile } from "@/lib/auth/helpers";
 import { enforceSandboxLimits, incrementSandboxUsage, enforceProfileGate } from "@/lib/guardrails";
 import { GuardrailViolation } from "@/lib/guardrails/errors";
 import { db } from "@/lib/db";
+import { isRedirectError } from "next/dist/client/components/redirect";
 import { students } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { checkEligibility, type EligibilityCriteria, type StudentProfile } from "@/lib/matching";
@@ -14,6 +15,7 @@ import { ParsedResumeData } from "@/lib/resume/ai-parser";
 import { z } from "zod";
 import type { Skill, Project, WorkExperience } from "@/lib/db/schema";
 import { generateEmbedding, composeStudentEmbeddingText } from "@/lib/embeddings";
+import { logger } from "@/lib/logger";
 
 const sandboxSchema = z.object({
   jdText: z.string().min(20, "Job description must be at least 20 characters").max(10000),
@@ -103,7 +105,7 @@ export async function POST(req: NextRequest) {
 
     // Fix: If embedding is missing (e.g. from legacy profile or failed job), generate it now
     if (!profile.embedding) {
-      console.log("[Sandbox] Profile embedding missing. Generating on-the-fly...");
+      logger.info("[Sandbox] Profile embedding missing. Generating on-the-fly...");
       try {
         const skills = (profile.skills as Skill[] | null) ?? [];
         const projects = (profile.projects as Project[] | null) ?? [];
@@ -127,7 +129,7 @@ export async function POST(req: NextRequest) {
 
         // Update local object so gate passes
         profile.embedding = embedding;
-        console.log("[Sandbox] Embedding generated and saved.");
+        logger.info("[Sandbox] Embedding generated and saved.");
       } catch (err) {
         console.error("[Sandbox] Failed to generate embedding:", err);
         // Continue and let the gate fail naturally with the correct error
@@ -234,6 +236,7 @@ export async function POST(req: NextRequest) {
       analysis: atsResult // Full new ATS result
     });
   } catch (error: any) {
+    if (isRedirectError(error)) throw error;
     // Handle guardrail violations with proper status codes
     if (error instanceof GuardrailViolation) {
       return NextResponse.json(error.toJSON(), { status: error.status });

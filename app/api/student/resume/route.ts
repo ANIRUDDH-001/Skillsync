@@ -6,6 +6,8 @@ import { students, jobs } from "@/lib/db/schema";
 import { requireStudentProfile } from "@/lib/auth/helpers";
 import { eq, and, sql } from "drizzle-orm";
 import { processResumeParseJobs } from "@/lib/workers/parse-resume";
+import { logger } from "@/lib/logger";
+import { isRedirectError } from "next/dist/client/components/redirect";
 
 // Configure Cloudinary
 cloudinary.config({
@@ -165,7 +167,7 @@ export async function POST(req: NextRequest) {
                     })
                     .where(eq(jobs.id, existingJob.id));
                 jobId = existingJob.id;
-                console.log(`[Resume API] Updated existing job ${jobId} for student ${user.id}`);
+                logger.info(`[Resume API] Updated existing job ${jobId} for student ${user.id}`);
             } else {
                 // Insert new job (payload.resumeText may be null)
                 const [newJob] = await db
@@ -183,7 +185,7 @@ export async function POST(req: NextRequest) {
                     })
                     .returning({ id: jobs.id });
                 jobId = newJob.id;
-                console.log(`[Resume API] Enqueued new job ${jobId} for student ${user.id}`);
+                logger.info(`[Resume API] Enqueued new job ${jobId} for student ${user.id}`);
             }
             // Fire-and-forget: trigger worker immediately so the job is processed
             // without waiting for the external cron. Errors are caught silently.
@@ -214,6 +216,7 @@ export async function POST(req: NextRequest) {
         );
 
     } catch (error: any) {
+        if (isRedirectError(error)) throw error;
         console.error("Resume upload failed:", error);
         return NextResponse.json(
             { success: false, error: error.message || "Internal server error during upload" },
